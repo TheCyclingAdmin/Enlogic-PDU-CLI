@@ -37,7 +37,7 @@ python3 -m pip install requests urllib3
 > enlogic_cli.py examples
 > ```
 
-\
+
 # Examples
 
 # 1) First-time setup (writes defaults; prompts if missing)
