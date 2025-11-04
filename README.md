@@ -1,33 +1,89 @@
-# Enlogic-PDU-CLI
-Enlogic PDU CLI commands  to turn on, off, reboot, etc... ports, multiple ports at a time or multiple pdu via a list of ips/hosts, works with a config file to store user/password other other info. 
+# Enlogic PDU CLI
+
+A fast, scriptable CLI to **list/get** outlet status and **control** outlets (`on/off/reboot/...`) on Enlogic PDUs.
+Supports **batch** actions across many hosts, **parallelism**, **CSV exports**, **JSON**, and **file logging**.
+
+## Features
+- Globals-first CLI: `... --user ... --host ... <action> [flags]`
+- Actions:
+  - `examples` — print practical scenarios
+  - `readme` — print this README
+  - `setup` — write defaults to an INI config
+  - `hosts` — show nicknames from `[hosts]`
+  - `list` — table of all outlets (sortable)
+  - `get` — show one outlet by `--port` or `--label`
+  - `on/off` — one or many `--port`, or `--all`
+  - `reboot`, `on_delay`, `off_delay`, `reboot_delay` — single `--port`
+  - `batch` — run `on/off/reboot/.../list/get` across many PDUs in parallel
+- Output:
+  - Human tables by default
+  - `--json` rows include `index,date,time`
+  - `--csv <path>` rows include `index,date,time`; safe-append if header matches
+- Networking/reliability:
+  - `--timeout`, `--retries`, `--backoff`
+  - `--insecure/--secure`, `--http/--https`
+  - `--parallel` for batch concurrency
+- Logging:
+  - `--log-file <path>` writes logs including the **full command**
+
+## Install
+```bash
+python3 -m pip install requests urllib3
+```
+
+## Examples
+> Print these anytime:
+> ```
+> enlogic_cli.py examples
+> ```
+
+\
+# Examples
+
+# 1) First-time setup (writes defaults; prompts if missing)
+enlogic_cli.py setup --config ~/.enlogic.ini
+
+# 2) List all outlets (HTTPS, self-signed)
+enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 list
+
+# 3) Get a single outlet by number or label
+enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 get --port 8
+enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 get --label "PSU1"
+
+# 4) Turn ON multiple ports on a single PDU, then show full table
+enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 on --port 3 5 7
+
+# 5) Turn OFF ALL outlets on a single PDU
+enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 off --all
+
+# 6) Batch reboot a specific port across many hosts with parallelism and timeout
+enlogic_cli.py --user admin --password pass --insecure --parallel 10 --timeout 5 \
+  batch reboot --hosts 10.0.0.10 10.0.0.11 --port 8
+
+# 7) Batch list ALL ports using a host file; export to CSV and log command/results
+enlogic_cli.py --user admin --password pass --insecure \
+  --log-file /tmp/pdu.log \
+  batch list --host-file hosts.txt --all --csv /tmp/pdu.csv
+
+# 8) JSON for scripting
+enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 list --json
+
+# 9) Use nicknames from config [hosts] and per-host PDU IDs
+# INI:
+# [hosts]   lab.pdu1 = 10.0.0.10
+# [pduid]   lab.pdu1 = 2
+enlogic_cli.py --user admin --password pass --insecure --host lab.pdu1 list
+
+# 10) Force HTTP (no TLS) and verify TLS explicitly
+enlogic_cli.py --user admin --password pass --http   --host 10.0.0.10 list
+enlogic_cli.py --user admin --password pass --secure --host 10.0.0.10 list
 
 
-usage: enlogic_cli.py [-h] [-c CONFIG] [-H HOST] [-u USER] [-P PASSWORD] [-k] [--secure] [-x]
-                      [--https] [-d PDUID] [--low-bank-max LOW_BANK_MAX] [--debug] [--config-help]
-                      [{hosts,setup,list,get,on,off,reboot,on_delay,off_delay,reboot_delay,multi}]
+## Config
+Run `enlogic_cli.py --config-help` to see the full annotated INI example.
 
-Enlogic PDU CLI. Globals first, then action. Example:
-  enlogic.py --user u --password p --insecure --host 10.0.0.1 get --port 8
-
-positional arguments:
-  {hosts,setup,list,get,on,off,reboot,on_delay,off_delay,reboot_delay,multi}
-                        Command to run (appears after globals)
-
-options:
-  -h, --help            show this help message and exit
-  -c CONFIG, --config CONFIG
-                        Config file (default: /home/awatkins/.enlogic.ini if present)
-  -H HOST, --host HOST  Nickname or IP (nickname resolved via [hosts])
-  -u USER, --user USER  Username (defaults to [auth] user)
-  -P PASSWORD, --password PASSWORD
-                        Password (defaults to [auth] password)
-  -k, --insecure        Skip TLS verification
-  --secure              Verify TLS
-  -x, --http            Use HTTP instead of HTTPS
-  --https               Use HTTPS
-  -d PDUID, --pduid PDUID
-                        PDU ID (override)
-  --low-bank-max LOW_BANK_MAX
-                        Outlet1 bank size (default 24)
-  --debug               Print HTTP request/exception debug to stderr
-  --config-help         Show config file help and exit
+## Exit Codes
+- `0` success
+- `1` usage/validation error
+- `2` HTTP error
+- `3` unexpected runtime error
