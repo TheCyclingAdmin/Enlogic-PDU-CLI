@@ -69,9 +69,9 @@ enlogic_cli.py --user admin --password pass --insecure \
 enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 list --json
 
 # 9) Use nicknames from config [hosts] and per-host PDU IDs
-# INI:
-# [hosts]   lab.pdu1 = 10.0.0.10
-# [pduid]   lab.pdu1 = 2
+INI:
+[hosts]   lab.pdu1 = 10.0.0.10
+[pduid]   lab.pdu1 = 2
 enlogic_cli.py --user admin --password pass --insecure --host lab.pdu1 list
 
 # 10) Force HTTP (no TLS) and verify TLS explicitly
