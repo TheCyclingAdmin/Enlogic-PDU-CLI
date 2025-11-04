@@ -57,13 +57,10 @@ enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 on --por
 enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 off --all
 
 # 6) Batch reboot a specific port across many hosts with parallelism and timeout
-enlogic_cli.py --user admin --password pass --insecure --parallel 10 --timeout 5 \
-  batch reboot --hosts 10.0.0.10 10.0.0.11 --port 8
+enlogic_cli.py --user admin --password pass --insecure --parallel 10 --timeout 5 batch reboot --hosts 10.0.0.10 10.0.0.11 --port 8
 
 # 7) Batch list ALL ports using a host file; export to CSV and log command/results
-enlogic_cli.py --user admin --password pass --insecure \
-  --log-file /tmp/pdu.log \
-  batch list --host-file hosts.txt --all --csv /tmp/pdu.csv
+enlogic_cli.py --user admin --password pass --insecure --log-file /tmp/pdu.log batch list --host-file hosts.txt --all --csv /tmp/pdu.csv
 
 # 8) JSON for scripting
 enlogic_cli.py --user admin --password pass --insecure --host 10.0.0.10 list --json
