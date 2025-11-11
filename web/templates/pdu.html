@@ -1,0 +1,59 @@
+<!doctype html><html><body>
+<h2>PDU: {{ host }} ({{ ip }})</h2>
+
+<form method="post" action="/action" style="margin-bottom:1em;">
+  <input type="hidden" name="host" value="{{ host }}">
+  <input type="hidden" name="pduid" value="{{ pduid }}">
+  Ports: <input name="ports" placeholder="e.g. 1,2,8,16">
+  <button name="verb" value="on">On</button>
+  <button name="verb" value="off">Off</button>
+  <button name="verb" value="reboot">Reboot</button>
+  <button name="verb" value="all-on">All On</button>
+  <button name="verb" value="all-off">All Off</button>
+  {% if is_admin %}
+    <button name="verb" value="lock">Lock</button>
+    <button name="verb" value="unlock">Unlock</button>
+    <button name="verb" value="lock-all">Lock All</button>
+    <button name="verb" value="unlock-all">Unlock All</button>
+  {% endif %}
+</form>
+
+<table border="1" cellpadding="6">
+<tr><th>Outlet</th><th>Label/Name</th><th>State</th>{% if is_admin %}<th>Lock</th>{% endif %}<th>Power</th></tr>
+{% for n, d in rows %}
+<tr>
+  <td>{{ "%02d"|format(n) }}</td>
+  <td>{{ d.name }}</td>
+  <td>{{ d.state }}</td>
+  {% if is_admin %}
+  <td>
+    <form method="post" action="/action" style="display:inline">
+      <input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="pduid" value="{{ pduid }}">
+      <input type="hidden" name="ports" value="{{ n }}"><button name="verb" value="lock">Lock</button>
+    </form>
+    <form method="post" action="/action" style="display:inline">
+      <input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="pduid" value="{{ pduid }}">
+      <input type="hidden" name="ports" value="{{ n }}"><button name="verb" value="unlock">Unlock</button>
+    </form>
+  </td>
+  {% endif %}
+  <td>
+    <form method="post" action="/action" style="display:inline">
+      <input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="pduid" value="{{ pduid }}">
+      <input type="hidden" name="ports" value="{{ n }}"><button name="verb" value="on">On</button>
+    </form>
+    <form method="post" action="/action" style="display:inline">
+      <input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="pduid" value="{{ pduid }}">
+      <input type="hidden" name="ports" value="{{ n }}"><button name="verb" value="off">Off</button>
+    </form>
+    <form method="post" action="/action" style="display:inline">
+      <input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="pduid" value="{{ pduid }}">
+      <input type="hidden" name="ports" value="{{ n }}"><button name="verb" value="reboot">Reboot</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</table>
+
+<p><a href="/hosts">Back to Hosts</a></p>
+</body></html>

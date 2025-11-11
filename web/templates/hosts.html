@@ -1,0 +1,10 @@
+<!doctype html><html><body>
+<h2>Configured Hosts</h2>
+<table border="1" cellpadding="6">
+<tr><th>Nickname</th><th>IP/Host</th><th>Actions</th></tr>
+{% for nick, ip in hosts.items() %}
+<tr><td>{{ nick }}</td><td>{{ ip }}</td><td><a href="/pdu?host={{ nick }}">View</a></td></tr>
+{% endfor %}
+</table>
+<p><a href="/">Back</a></p>
+</body></html>
