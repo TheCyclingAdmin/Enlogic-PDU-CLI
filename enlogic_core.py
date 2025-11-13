@@ -1,9 +1,5 @@
-# =========================================
-# file: enlogic_core.py
-# =========================================
 from __future__ import annotations
 import configparser, csv, json, logging, os, re, sys, time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -28,7 +24,7 @@ DEFAULT_HOSTS_FILE = os.path.expanduser("~/.enlogic-hosts.ini")
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_RETRIES = 3
 DEFAULT_BACKOFF = 0.5
-DEFAULT_PARALLEL = 6
+
 CSV_HEADER = ["index","date","time","host","pdu","outlet","name","state","action","ok"]
 
 logger = logging.getLogger("enlogic_cli")
@@ -172,12 +168,43 @@ class AppConfig:
         hmap = self.hosts_map()
         return (hmap[host_arg], host_arg) if host_arg in hmap else (host_arg, None)
 
+def write_config(path: str, **kwargs) -> None:
+    cfg = configparser.ConfigParser()
+    if os.path.exists(path):
+        cfg.read(path)
+    cfg.setdefault("auth", {})
+    cfg.setdefault("defaults", {})
+    cfg["auth"]["user"] = kwargs.get("user", cfg["auth"].get("user",""))
+    cfg["auth"]["password"] = kwargs.get("password", cfg["auth"].get("password",""))
+    d = cfg["defaults"]
+    d["http"] = str(kwargs.get("http", d.get("http","false"))).lower()
+    d["insecure"] = str(kwargs.get("insecure", d.get("insecure","false"))).lower()
+    d["pduid"] = str(kwargs.get("pduid", d.get("pduid","1")))
+    d["low_bank_max"] = str(kwargs.get("low_bank_max", d.get("low_bank_max","24")))
+    d["auto_bank"] = str(kwargs.get("auto_bank", d.get("auto_bank","true"))).lower()
+    d["hosts_file"] = kwargs.get("hosts_file", d.get("hosts_file", DEFAULT_HOSTS_FILE))
+    d["use_super_for_read"] = str(kwargs.get("use_super_for_read", d.get("use_super_for_read","true"))).lower()
+    d["timeout"] = str(kwargs.get("timeout", d.get("timeout","10.0")))
+    d["retries"] = str(kwargs.get("retries", d.get("retries","3")))
+    d["backoff"] = str(kwargs.get("backoff", d.get("backoff","0.5")))
+    os.makedirs(os.path.dirname(os.path.expanduser(path)), exist_ok=True)
+    with open(os.path.expanduser(path), "w") as f:
+        cfg.write(f)
+
+def write_super_to_config(path: str, user: str, password: str) -> None:
+    cfg = configparser.ConfigParser()
+    if os.path.exists(path):
+        cfg.read(path)
+    cfg.setdefault("superadmin", {})
+    cfg["superadmin"]["user"] = user
+    cfg["superadmin"]["password"] = password
+    with open(os.path.expanduser(path), "w") as f:
+        cfg.write(f)
+
 def _make_retry(retries: int, backoff: float) -> Retry:
-    base_kwargs = dict(
-        total=retries, connect=retries, read=retries,
-        backoff_factor=backoff, status_forcelist=(502,503,504,521,522,524),
-        raise_on_status=False,
-    )
+    base_kwargs = dict(total=retries, connect=retries, read=retries,
+                       backoff_factor=backoff, status_forcelist=(502,503,504,521,522,524),
+                       raise_on_status=False)
     try:
         return Retry(allowed_methods=frozenset({"GET","POST"}), **base_kwargs)
     except TypeError:
@@ -191,11 +218,6 @@ class PDUClient:
         self.debug = debug
         self.session = self._build_session(retries, backoff)
 
-    def _dbg(self, msg: str) -> None:
-        if self.debug:
-            sys.stderr.write(f"[debug] {msg}\n")
-            logger.debug(msg)
-
     def _build_session(self, retries: int, backoff: float) -> Session:
         sess = requests.Session()
         retry = _make_retry(retries, backoff)
@@ -203,6 +225,11 @@ class PDUClient:
         sess.mount("http://", adapter)
         sess.mount("https://", adapter)
         return sess
+
+    def _dbg(self, msg: str) -> None:
+        if self.debug:
+            sys.stderr.write(f"[debug] {msg}\n")
+            logger.debug(msg)
 
     def rf_get(self, path_or_abs: str, auth: Optional[HTTPBasicAuth]) -> dict:
         url = path_or_abs if path_or_abs.startswith(("http://","https://")) else f"{self.base}{path_or_abs}"
@@ -366,16 +393,6 @@ def print_table(title: str, rows: Iterable[Tuple[int,str,str,Optional[bool]]], u
         print(f"{n:02d}     | {nm[:28]:<28} | {state_disp:<7} | {lk_disp}")
     print()
 
-def print_batch_table(title: str, rows: Iterable[Tuple[str,int,str,str,Optional[bool]]], use_color: bool) -> None:
-    print(f"\n{title}\n")
-    print("Host             | Outlet | Label / Name                 | State   | Lock")
-    print("-----------------+--------+------------------------------+---------+------")
-    for host, n, nm, st, lk in rows:
-        state_disp = colorize(st, st, use_color)
-        lk_disp = "locked" if lk else ("unlocked" if lk is not None else "-")
-        print(f"{host:<16} | {n:02d}    | {nm[:28]:<28} | {state_disp:<7} | {lk_disp}")
-    print()
-
 def emit_json(data: dict) -> None:
     print(json.dumps(data, indent=2))
 
@@ -409,7 +426,6 @@ def _csv_write(path: str, rows: List[Dict[str, Any]], header_mode: str) -> None:
         if write_header: w.writeheader()
         for r in rows:
             w.writerow({k: r.get(k, "") for k in CSV_HEADER})
-    logger.info("csv: wrote %d rows -> %s", len(rows), target)
 
 def _csv_rows_from_table(base: str, pdu_label: str, rows: Iterable[Tuple[int,str,str]], action: str, result_by_port: Optional[Dict[int, Optional[bool]]] = None) -> List[Dict[str, Any]]:
     host_ip = base.split("://", 1)[1]
@@ -423,20 +439,6 @@ def _csv_rows_from_table(base: str, pdu_label: str, rows: Iterable[Tuple[int,str
         out.append({"index": idx, "date": date_str, "time": time_str, "host": host_ip, "pdu": pdu_label,
                     "outlet": n, "name": nm, "state": st, "action": action, "ok": ok_val if ok_val is not None else ""})
     return out
-
-def _csv_rows_from_batch(rows: Iterable[Tuple[str,int,str,str]], action: str) -> List[Dict[str, Any]]:
-    date_str, time_str = now_date_time()
-    out: List[Dict[str, Any]] = []
-    for idx, (host, n, nm, st) in enumerate(rows, start=1):
-        out.append({"index": idx, "date": date_str, "time": time_str, "host": host, "pdu": "", "outlet": n,
-                    "name": nm, "state": st, "action": action, "ok": ""})
-    return out
-
-def _csv_print_stdout(rows: List[Dict[str, Any]]) -> None:
-    w = csv.DictWriter(sys.stdout, fieldnames=CSV_HEADER)
-    w.writeheader()
-    for r in rows:
-        w.writerow({k: r.get(k, "") for k in CSV_HEADER})
 
 class PowerAction(str, Enum):
     OFF = "off"
@@ -455,17 +457,10 @@ POWSTAT: Dict["PowerAction", int] = {
     PowerAction.REBOOT_DELAY: 5,
 }
 
-def _build_client(base: str, insecure: bool, timeout: float, retries: int, backoff: float, debug: bool) -> PDUClient:
-    return PDUClient(base, insecure, timeout, retries, backoff, debug)
-
-def parse_sort_key(sort: str, status: Dict[int,str], names: Dict[int,str]) -> List[int]:
-    if sort == "outlet": return sorted(status)
-    return sorted(status, key=lambda n: (names.get(n,"").lower(), n))
-
 def fetch_table_for(host: str, pduid: int, base: str, client: PDUClient, auth: HTTPBasicAuth, sort: str):
     status, names = client.fetch_maps(pduid, auth)
     label = client.pdu_display(pduid, auth, override=base.split("://",1)[-1])
-    order = parse_sort_key(sort, status, names)
+    order = sorted(status) if sort == "outlet" else sorted(status, key=lambda n: (names.get(n,"").lower(), n))
     locks = client.fetch_locks_map(pduid, auth)
     rows = [(n, names.get(n,""), status.get(n,"unknown"), locks.get(n)) for n in order]
     return label, rows, status, names, locks
@@ -479,7 +474,9 @@ def _emit_by_format(format_: str, title: str, base: str, label: str,
         emit_json(as_json_payload if as_json_payload is not None else {"ok": True, "action": action_name})
     elif format_ == "csv":
         csv_rows = _csv_rows_from_table(base, label, [(n,nm,st) for (n,nm,st,_) in rows], action=action_name)
-        _csv_print_stdout(csv_rows)
+        # stdout CSV
+        w = csv.DictWriter(sys.stdout, fieldnames=CSV_HEADER); w.writeheader()
+        for r in csv_rows: w.writerow({k: r.get(k, "") for k in CSV_HEADER})
         if csv_path:
             _csv_write(csv_path, csv_rows, header_mode=csv_header)
     else:
@@ -491,63 +488,28 @@ def list_action(host: str, pduid: int, base: str, client: PDUClient, auth: HTTPB
                 out_format: str, no_color: bool, csv_path: Optional[str], csv_header: str) -> None:
     label, rows, status, names, _locks = fetch_table_for(host, pduid, base, client, auth, sort)
     date_str, time_str = now_date_time()
-    payload = {
-        "ok": True, "action": "list", "date": date_str, "time": time_str,
-        "host": host, "pdu": label, "base": base,
-        "outlets": [{"n": n, "name": nm, "state": st, "lock": (True if lk else False if lk is not None else None)}
-                    for (n, nm, st, lk) in rows],
-    }
-    _emit_by_format(out_format, f"PDU: {label}  ({base})", base, label, rows, "list", csv_path, csv_header,
-                    isatty_color(not no_color), payload)
+    payload = {"ok": True, "action": "show", "date": date_str, "time": time_str,
+               "host": host, "pdu": label, "base": base,
+               "outlets": [{"n": n, "name": nm, "state": st, "lock": (True if lk else False if lk is not None else None)} for (n,nm,st,lk) in rows]}
+    _emit_by_format(out_format, f"PDU: {label}  ({base})", base, label, rows, "show", csv_path, csv_header, isatty_color(not no_color), payload)
 
 def get_action(port: Optional[int], label_query: Optional[str], host: str, pduid: int, base: str, client: PDUClient,
                auth: HTTPBasicAuth, out_format: str, no_color: bool, csv_path: Optional[str], csv_header: str) -> None:
     _, rows, status, names, locks = fetch_table_for(host, pduid, base, client, auth, "outlet")
     target: Optional[int] = None
-    if port is not None:
-        target = port
+    if port is not None: target = port
     elif label_query:
         for n, nm in names.items():
-            if nm == label_query:
-                target = n; break
+            if nm == label_query: target = n; break
     if target is None:
-        print("Not found. Use --port or --label to identify an outlet.")
-        sys.exit(2)
+        print("Not found. Use --port or --label to identify an outlet."); sys.exit(2)
     row = (target, names.get(target,""), status.get(target,"unknown"), locks.get(target))
     date_str, time_str = now_date_time()
-    payload = {"ok": True, "action": "get", "date": date_str, "time": time_str,
+    payload = {"ok": True, "action": "show", "date": date_str, "time": time_str,
                "host": host, "base": base,
                "outlet": {"n": row[0], "name": row[1], "state": row[2], "lock": (True if row[3] else False if row[3] is not None else None)}}
-    _emit_by_format(out_format, f"PDU: {host}  ({base})", base, host, [row], "get", csv_path, csv_header,
-                    isatty_color(not no_color), payload)
+    _emit_by_format(out_format, f"PDU: {host}  ({base})", base, host, [row], "show", csv_path, csv_header, isatty_color(not no_color), payload)
 
-def on_off_action(action: "PowerAction", ports: List[int], all_flag: bool, host: str, base: str, pduid: int, client: PDUClient,
-                  auth_user: str, auth_pw: str, auth_basic: HTTPBasicAuth, low_bank_max: int,
-                  sort: str, out_format: str, no_color: bool, csv_path: Optional[str], csv_header: str) -> None:
-    label, rows, results = execute_on_off(action, ports, all_flag, host, base, pduid, client, auth_user, auth_pw, auth_basic, low_bank_max, sort)
-    date_str, time_str = now_date_time()
-    payload = {"ok": all(r.get("ok") for r in results), "action": action.value, "date": date_str, "time": time_str,
-               "host": host, "pdu": label, "base": base, "ports": results,
-               "outlets": [{"n": n, "name": nm, "state": st, "lock": (True if lk else False if lk is not None else None)}
-                           for (n,nm,st,lk) in rows]}
-    _emit_by_format(out_format, f"PDU: {label}  ({base})", base, label, rows, action.value, csv_path, csv_header,
-                    isatty_color(not no_color), payload)
-
-def lock_unlock_action(locked: bool, ports: List[int], all_flag: bool, host: str, base: str, pduid: int,
-                       client: PDUClient, auth_basic: HTTPBasicAuth,
-                       sort: str, out_format: str, no_color: bool, csv_path: Optional[str], csv_header: str) -> None:
-    label, rows, results = execute_lock_unlock(locked, ports, all_flag, host, base, pduid, client, auth_basic, sort)
-    date_str, time_str = now_date_time()
-    payload = {"ok": all(r.get("ok") for r in results), "action": ("lock" if locked else "unlock"),
-               "date": date_str, "time": time_str,
-               "host": host, "pdu": label, "base": base, "ports": results,
-               "outlets": [{"n": n, "name": nm, "state": st, "lock": (True if lk else False if lk is not None else None)}
-                           for (n,nm,st,lk) in rows]}
-    _emit_by_format(out_format, f"PDU: {label}  ({base})", base, label, rows,
-                    "lock" if locked else "unlock", csv_path, csv_header,
-                    isatty_color(not no_color), payload)
-
-# Non-printing variants to support richer exit code logic
 def execute_on_off(action: "PowerAction", ports: List[int], all_flag: bool, host: str, base: str, pduid: int, client: PDUClient,
                    auth_user: str, auth_pw: str, auth_basic: HTTPBasicAuth, low_bank_max: int,
                    sort: str, retry_once: bool = False, retry_count: int = 0, retry_wait: float = 0.0):
@@ -556,15 +518,13 @@ def execute_on_off(action: "PowerAction", ports: List[int], all_flag: bool, host
     else:
         ports_to_change = ports
     cookie = client.login_cookie(auth_user, auth_pw); client.enable_control(cookie)
-    results = []
-    failures = []
+    results = []; failures = []
     for p in ports_to_change:
         try:
             client.set_power(cookie, pduid, p, action, low_bank_max)
             results.append({"port": p, "ok": True})
         except Exception as ex:
-            results.append({"port": p, "ok": False, "error": str(ex)})
-            failures.append(p)
+            results.append({"port": p, "ok": False, "error": str(ex)}); failures.append(p)
     total_retries = max(retry_count, 1 if retry_once else 0)
     if total_retries > 0 and failures:
         idx_by_port = {r["port"]: i for i, r in enumerate(results)}
@@ -572,26 +532,21 @@ def execute_on_off(action: "PowerAction", ports: List[int], all_flag: bool, host
             if retry_wait and attempt > 0:
                 try: time.sleep(float(retry_wait))
                 except Exception: pass
-            still_failing = []
+            still = []
             for p in failures:
                 try:
                     client.set_power(cookie, pduid, p, action, low_bank_max)
                     i = idx_by_port.get(p)
                     if i is not None:
-                        results[i]["ok"] = True
-                        results[i]["retried"] = True
-                        results[i]["retries"] = attempt
+                        results[i]["ok"] = True; results[i]["retried"] = True; results[i]["retries"] = attempt
                         results[i].pop("error", None)
                 except Exception as ex:
                     i = idx_by_port.get(p)
                     if i is not None:
-                        results[i]["retried"] = True
-                        results[i]["retries"] = attempt
-                        results[i]["last_error"] = str(ex)
-                    still_failing.append(p)
-            failures = still_failing
-            if not failures:
-                break
+                        results[i]["retried"] = True; results[i]["retries"] = attempt; results[i]["last_error"] = str(ex)
+                    still.append(p)
+            failures = still
+            if not failures: break
     label, rows, _, _, _ = fetch_table_for(host, pduid, base, client, auth_basic, sort)
     return label, rows, results
 
@@ -601,13 +556,11 @@ def execute_lock_unlock(locked: bool, ports: List[int], all_flag: bool, host: st
         status, _ = client.fetch_maps(pduid, auth_basic); ports_to_change = sorted(status.keys())
     else:
         ports_to_change = ports
-    results = []
-    failures = []
+    results = []; failures = []
     for p in ports_to_change:
         ok = client.set_lock(pduid, p, locked, auth_basic)
         results.append({"port": p, "ok": ok})
-        if not ok:
-            failures.append(p)
+        if not ok: failures.append(p)
     total_retries = max(retry_count, 1 if retry_once else 0)
     if total_retries > 0 and failures:
         for attempt in range(1, total_retries + 1):
@@ -618,13 +571,9 @@ def execute_lock_unlock(locked: bool, ports: List[int], all_flag: bool, host: st
             for r in results:
                 if r["port"] in failures and not r["ok"]:
                     ok2 = client.set_lock(pduid, r["port"], locked, auth_basic)
-                    r["retried"] = True
-                    r["retries"] = attempt
-                    r["ok"] = r["ok"] or ok2
-                    if not r["ok"]:
-                        still.append(r["port"])
+                    r["retried"] = True; r["retries"] = attempt; r["ok"] = r["ok"] or ok2
+                    if not r["ok"]: still.append(r["port"])
             failures = still
-            if not failures:
-                break
+            if not failures: break
     label, rows, _, _, _ = fetch_table_for(host, pduid, base, client, auth_basic, sort)
     return label, rows, results

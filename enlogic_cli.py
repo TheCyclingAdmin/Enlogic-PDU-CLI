@@ -1,6 +1,3 @@
-# =========================================
-# file: enlogic_cli.py
-# =========================================
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse, json, os, sys
@@ -10,7 +7,7 @@ import enlogic_core as core
 import enlogic_text as text
 import enlogic_errors as err
 
-def _prog() -> str: return "enlogic_cli.py"
+def _prog() -> str: return "enlogic_cli"
 
 def _combine_tls_flags(insecure: Optional[bool], secure: Optional[bool]) -> Optional[bool]:
     if insecure is None and secure is None: return None
@@ -27,7 +24,7 @@ def build_global_parser() -> argparse.ArgumentParser:
     for k, v in text.action_descriptions().items():
         desc_lines.append(f"  {k:12s} {v}")
     desc_lines.append("")
-    desc_lines.append("Tip: run 'examples' for usage.")
+    desc_lines.append("Tip: run '--help' or 'help' for usage.")
     p = argparse.ArgumentParser(add_help=True, allow_abbrev=False,
                                 description="\n".join(desc_lines),
                                 formatter_class=argparse.RawTextHelpFormatter)
@@ -46,13 +43,12 @@ def build_global_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, help=f"HTTP timeout seconds (default {core.DEFAULT_TIMEOUT})")
     p.add_argument("--retries", type=int, help=f"HTTP retries (default {core.DEFAULT_RETRIES})")
     p.add_argument("--backoff", type=float, help=f"HTTP backoff factor (default {core.DEFAULT_BACKOFF})")
-    p.add_argument("--parallel", type=int, help=f"Batch parallelism (default {core.DEFAULT_PARALLEL})")
     p.add_argument("--debug", action="store_true", help="Verbose debug to stderr")
     p.add_argument("--config-help", action="store_true", help="Print INI config help and exit")
     p.add_argument("--csv-header", choices=["never","auto","always"], default="auto",
                    help="CSV header policy: never write, auto-detect (default), or always write before rows")
     p.add_argument("--format", choices=["table","json","csv"], default="table",
-                   help="Output format for commands that support it (table/json/csv). CSV is written to stdout; --csv-header applies.")
+                   help="Output format (table/json/csv). CSV writes to stdout; --csv-header applies.")
     p.add_argument("action", nargs="?", choices=list(text.action_descriptions().keys()), help="Command to run")
     return p
 
@@ -61,18 +57,20 @@ def build_action_parser(action: str) -> argparse.ArgumentParser:
                                  description=text.action_descriptions().get(action, action),
                                  formatter_class=argparse.RawTextHelpFormatter)
     add_format = lambda p: p.add_argument("--format", choices=["table","json","csv"], help="Output format override for this action")
-    if action in ("setup","examples","validate"):
+    if action in ("setup","validate","help"):
         if action == "validate":
             ap.add_argument("--hosts", nargs="*", help="Optional list of hosts/nicknames to verify resolution")
             ap.add_argument("--strict", action="store_true", help="Treat warnings as errors (non-zero exit)")
             ap.add_argument("--no-color", action="store_true", help="Disable color in table output")
             add_format(ap)
-    elif action in ("show","list","get"):
+        elif action == "help":
+            ap.add_argument("topic", nargs="?", help="Optional command to show help for")
+    elif action in ("show",):
         ap.add_argument("--sort", choices=["outlet","name"], default="outlet", help="Sort by outlet number or name")
         ap.add_argument("--no-color", action="store_true", help="Disable color in table output")
         ap.add_argument("--csv", help="(Optional) Also append table rows to this CSV path")
-        ap.add_argument("--port", type=int, help="(show/get) Target a single outlet by number")
-        ap.add_argument("--label", help="(show/get) Target a single outlet by exact label")
+        ap.add_argument("--port", type=int, help="Target a single outlet by number")
+        ap.add_argument("--label", help="Target a single outlet by exact label")
         ap.add_argument("--use-super", action="store_true", help="Force super-admin creds for reading")
         ap.add_argument("--no-super", action="store_true", help="Force normal creds for reading (override defaults)")
         add_format(ap)
@@ -94,10 +92,6 @@ def build_action_parser(action: str) -> argparse.ArgumentParser:
         ap.add_argument("--retry-ports", type=int, default=0, help="Retry failed operation up to N times")
         ap.add_argument("--retry-ports-once", action="store_true", help="Retry failed operation once (compat)")
         ap.add_argument("--retry-wait", type=float, default=0.0, help="Seconds to wait between retries")
-        add_format(ap)
-    elif action == "batch":
-        ap.add_argument("--hosts", nargs="+", required=True, help="List of hosts or nicknames to act on")
-        ap.add_argument("--no-color", action="store_true", help="Disable color in table output")
         add_format(ap)
     return ap
 
@@ -145,11 +139,16 @@ backoff = 0.5
     if not action:
         gparser.print_help(); err.exit_with(err.ExitCode.OK)
 
+    if action == "help":
+        sub = rest[0] if rest else None
+        if not sub:
+            gparser.print_help(); err.exit_with(err.ExitCode.OK)
+        else:
+            aparser = build_action_parser(sub)
+            aparser.print_help(); err.exit_with(err.ExitCode.OK)
+
     aparser = build_action_parser(action)
     aargs = aparser.parse_args(rest)
-
-    if action == "examples":
-        print(text.EXAMPLES_TEXT); err.exit_with(err.ExitCode.OK)
 
     if action == "validate":
         from configparser import NoSectionError, NoOptionError
@@ -160,21 +159,21 @@ backoff = 0.5
 
         if not os.path.exists(cfg.path):
             add_issue("config", "path", "error", f"Config not found: {cfg.path}",
-                      "Copy enlogic.ini.sample to ~/.enlogic.ini or run `enlogic-cli setup`.")
+                      "Copy enlogic.ini.sample to ~/.enlogic.ini or run `enlogic_cli setup`.")
         else:
             user = cfg.cfg.get("auth","user", fallback="")
             pw = cfg.cfg.get("auth","password", fallback="")
             if not user:
-                add_issue("config", "[auth].user", "error", "Missing username", "Run `enlogic-cli setup` or set [auth].user.")
+                add_issue("config", "[auth].user", "error", "Missing username", "Run `enlogic_cli setup` or set [auth].user.")
             if not pw:
-                add_issue("config", "[auth].password", "error", "Missing password", "Run `enlogic-cli setup` or set [auth].password (chmod 600).")
+                add_issue("config", "[auth].password", "error", "Missing password", "Run `enlogic_cli setup` or set [auth].password (chmod 600).")
 
             def _check_bool(opt):
                 try: cfg.cfg.getboolean("defaults", opt)
                 except (ValueError, NoOptionError, NoSectionError):
                     val = cfg.cfg.get("defaults", opt, fallback="<missing>")
                     add_issue("config", f"[defaults].{opt}", "warning", f"Invalid/missing boolean: {val}",
-                              f"Use true/false; run `enlogic-cli setup` to set {opt}.")
+                              f"Use true/false; run `enlogic_cli setup` to set {opt}.")
             def _check_int(opt, minval=0):
                 try:
                     v = cfg.cfg.getint("defaults", opt)
@@ -182,19 +181,19 @@ backoff = 0.5
                         add_issue("config", f"[defaults].{opt}", "warning", f"Value {v} < {minval}", f"Increase {opt} to >= {minval}.")
                 except (ValueError, NoOptionError, NoSectionError):
                     val = cfg.cfg.get("defaults", opt, fallback="<missing>")
-                    add_issue("config", f"[defaults].{opt}", "warning", f"Invalid/missing int: {val}", f"Set a valid integer via `enlogic-cli setup`.")
+                    add_issue("config", f"[defaults].{opt}", "warning", f"Invalid/missing int: {val}", f"Set a valid integer via `enlogic_cli setup`.")
             _check_bool("http"); _check_bool("insecure"); _check_bool("auto_bank"); _check_bool("use_super_for_read")
             _check_int("pduid", 1); _check_int("low_bank_max", 1); _check_int("retries", 0)
             try:
                 v = cfg.cfg.getfloat("defaults","timeout"); 
                 if v <= 0: add_issue("config", "[defaults].timeout", "warning", f"Timeout {v} <= 0", "Use a positive timeout.")
             except Exception:
-                add_issue("config", "[defaults].timeout", "warning", "Invalid/missing float", "Set with `enlogic-cli setup`.")
+                add_issue("config", "[defaults].timeout", "warning", "Invalid/missing float", "Set with `enlogic_cli setup`.")
             try:
                 v = cfg.cfg.getfloat("defaults","backoff"); 
                 if v < 0: add_issue("config", "[defaults].backoff", "warning", f"Backoff {v} < 0", "Use a non-negative backoff.")
             except Exception:
-                add_issue("config", "[defaults].backoff", "warning", "Invalid/missing float", "Set with `enlogic-cli setup`.")
+                add_issue("config", "[defaults].backoff", "warning", "Invalid/missing float", "Set with `enlogic_cli setup`.")
 
             hosts_file = cfg.cfg.get("defaults","hosts_file", fallback=core.DEFAULT_HOSTS_FILE)
             hf_expanded = os.path.expanduser(hosts_file)
@@ -205,19 +204,6 @@ backoff = 0.5
                 hmap = cfg.hosts_map()
                 if not hmap:
                     add_issue("hosts", "[hosts]", "warning", "No host nicknames found", "Add entries under [hosts] in the hosts file.")
-                else:
-                    import re as _re
-                    ip_re = _re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
-                    for nick, target in sorted(hmap.items()):
-                        bad = False
-                        if " " in nick or not nick.strip():
-                            add_issue("hosts", nick, "error", "Invalid nickname", "Use alphanumerics, dashes, and underscores.")
-                            bad = True
-                        if not target.strip():
-                            add_issue("hosts", nick, "error", "Empty host/IP value", "Set an IP or DNS name.")
-                            bad = True
-                        if not bad and not ip_re.match(target):
-                            pass
 
             try:
                 use_s = cfg.cfg.getboolean("defaults","use_super_for_read")
@@ -228,7 +214,7 @@ backoff = 0.5
             if use_s and (not su or not sp):
                 add_issue("config", "[superadmin]", "warning",
                           "use_super_for_read=true but superadmin credentials are missing",
-                          "Run `enlogic-cli setup` and add super-admin credentials.")
+                          "Run `enlogic_cli setup` and add super-admin credentials.")
 
         thosts = getattr(aargs, "hosts", None) or []
         if thosts:
@@ -344,12 +330,11 @@ backoff = 0.5
         if user and pw: return HTTPBasicAuth(user, pw)
         return HTTPBasicAuth(user or "", pw or "")
 
-    # Wrap networked actions to map exceptions to exit codes
     try:
-        if action in ("show","list","get"):
+        if action in ("show",):
             auth = pick_read_auth(force_super=getattr(aargs, "use_super", False),
                                   force_no_super=getattr(aargs, "no_super", False))
-            if action == "get" or (action == "show" and (aargs.port or aargs.label)):
+            if aargs.port or aargs.label:
                 core.get_action(aargs.port, aargs.label, gargs.host, pduid, base, client, auth,
                                 out_format=out_format, no_color=aargs.no_color, csv_path=getattr(aargs, "csv", None), csv_header=gargs.csv_header)
             else:
@@ -376,8 +361,7 @@ backoff = 0.5
                        "outlets": [{"n": n, "name": nm, "state": st, "lock": (True if lk else False if lk is not None else None)} for (n,nm,st,lk) in rows]}
             core._emit_by_format(out_format, f"PDU: {label}  ({base})", base, label, rows, act.value,
                                  getattr(aargs, "csv", None), gargs.csv_header, core.isatty_color(not aargs.no_color), payload)
-            succ = sum(1 for r in results if r.get("ok"))
-            fail = sum(1 for r in results if not r.get("ok"))
+            succ = sum(1 for r in results if r.get("ok")); fail = sum(1 for r in results if not r.get("ok"))
             if fail == 0: err.exit_with(err.ExitCode.OK)
             elif succ > 0: err.exit_with(err.ExitCode.PARTIAL, "partial: some outlets failed")
             else: err.exit_with(err.ExitCode.DEVICE, "failed: no outlets changed")
@@ -397,8 +381,7 @@ backoff = 0.5
                        "outlets": [{"n": n, "name": nm, "state": st, "lock": (True if lk else False if lk is not None else None)} for (n,nm,st,lk) in rows]}
             core._emit_by_format(out_format, f"PDU: {label}  ({base})", base, label, rows, actname,
                                  getattr(aargs, "csv", None), gargs.csv_header, core.isatty_color(not aargs.no_color), payload)
-            succ = sum(1 for r in results if r.get("ok"))
-            fail = sum(1 for r in results if not r.get("ok"))
+            succ = sum(1 for r in results if r.get("ok")); fail = sum(1 for r in results if not r.get("ok"))
             if fail == 0: err.exit_with(err.ExitCode.OK)
             elif succ > 0: err.exit_with(err.ExitCode.PARTIAL, "partial: some locks failed")
             else: err.exit_with(err.ExitCode.DEVICE, "failed: no locks changed")
@@ -428,15 +411,6 @@ backoff = 0.5
                                  getattr(aargs, "csv", None), gargs.csv_header, core.isatty_color(not aargs.no_color), payload)
             if results and results[0].get("ok"): err.exit_with(err.ExitCode.OK)
             else: err.exit_with(err.ExitCode.DEVICE, "failed: outlet did not change")
-
-        if action == "batch":
-            if not user or not pw: print("Error: provide --user/--password or add [auth] to config."); err.exit_with(err.ExitCode.CONFIG)
-            build_params = dict(
-                user=user, password=pw, http=scheme_http, insecure=insecure_flag, timeout=timeout, retries=retries,
-                backoff=backoff, debug=gargs.debug, parallel=(gargs.parallel or core.DEFAULT_PARALLEL), pduid=gargs.pduid
-            )
-            core.batch_list(aargs.hosts, build_params, dcfg, out_format=out_format, json_out=(out_format=="json"), no_color=aargs.no_color)
-            err.exit_with(err.ExitCode.OK)
 
         print("Unknown action."); err.exit_with(err.ExitCode.USAGE)
     except Exception as e:
