@@ -1,0 +1,22 @@
+[auth]
+user = admin
+password = changeme
+
+[superadmin]
+user = super
+password = superpass
+
+[defaults]
+http = false
+insecure = false
+pduid = 1
+low_bank_max = 24
+auto_bank = true
+hosts_file = ~/.enlogic-hosts.ini
+use_super_for_read = true
+timeout = 10.0
+retries = 3
+backoff = 0.5
+
+[pduid]
+# rackA = 2
